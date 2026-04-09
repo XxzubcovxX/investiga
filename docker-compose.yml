@@ -24,6 +24,8 @@ services:
     build: ./backend-python
     container_name: investiga_agente_python
     restart: always
+    ports:
+      - "5000:5000"
     env_file: 
       - /home/zubgorka/investiga/.env
     extra_hosts:
