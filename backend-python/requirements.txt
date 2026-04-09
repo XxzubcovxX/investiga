@@ -1,6 +1,6 @@
+fastapi
+uvicorn
+sqlalchemy
 mysql-connector-python
-python-dotenv
 google-generativeai
-crewai
-langchain
-flask
+python-dotenv
