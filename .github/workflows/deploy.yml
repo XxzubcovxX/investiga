@@ -15,7 +15,7 @@ jobs:
       - name: Deploy com Docker Compose
         run: |
           # O Docker Compose vai usar o .env que já está no seu servidor
-          docker-compose up -d --build
+          docker compose up -d --build
           
       - name: Limpeza de imagens antigas
         run: docker image prune -f
