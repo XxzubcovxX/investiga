@@ -9,7 +9,7 @@ services:
     ports:
       - "4001:4000" # Mudamos para a 4000 para o Front não precisar de ajuste
     env_file: 
-      - .env
+      - /home/zubgorka/runners/investiga/_work/investiga/.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
