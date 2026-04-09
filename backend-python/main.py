@@ -1,14 +1,17 @@
-import time
+from flask import Flask, jsonify
 import os
+import time
 
-print("--- AGENTE DE IA INVESTIGATIVA ---")
-print(f"Target DB: {os.getenv('DB_HOST')}")
+app = Flask(__name__)
 
-try:
-    # Aqui depois entrará a lógica dos Agentes (CrewAI/Gemini)
-    while True:
-        print("Agente Python em modo de escuta...")
-        time.sleep(30)
-except KeyboardInterrupt:
-    print("Desligando agente...")
-    
+@app.route('/')
+def index():
+    return jsonify({
+        "status": "online",
+        "agente": "IA Investigativa",
+        "database": os.getenv('DB_HOST')
+    })
+
+if __name__ == '__main__':
+    # '0.0.0.0' faz o Flask ouvir todas as interfaces do container
+    app.run(host='0.0.0.0', port=5000)
