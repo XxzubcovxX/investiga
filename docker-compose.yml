@@ -1,0 +1,48 @@
+
+
+services:
+  # Backend em Node.js
+  api-node:
+    build: ./backend-node
+    container_name: investiga_api_node
+    restart: always
+    ports:
+      - "4000:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - /home/zubgorka/investiga/.env
+    environment:
+      - DB_HOST=host.docker.internal # Sobrescreve se necessário
+      - PYTHON_AGENT_URL=http://agente-python:5000
+    networks:
+      - investiga_network
+      - default # Se o seu redis_db estiver na rede padrão do docker
+
+  # Backend em Python
+  agente-python:
+    build: ./backend-python
+    container_name: investiga_agente_python
+    restart: always
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - DB_HOST=host.docker.internal
+    networks:
+      - investiga_network
+
+  # Frontend em React
+  investiga-front:
+    build: ./frontend-react
+    container_name: investiga_web
+    ports:
+      - "3001:3000"
+    environment:
+      - REACT_APP_API_URL=http://100.65.19.93:4000
+    networks:
+      - investiga_network
+
+networks:
+  investiga_network:
+    driver: bridge
