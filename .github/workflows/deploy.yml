@@ -1,0 +1,21 @@
+name: Deploy Investigacao Zerver
+
+on:
+  push:
+    branches: [ main ] # Dispara o deploy sempre que houver push na main
+
+jobs:
+  deploy:
+    runs-on: self-hosted # OBRIGATÓRIO: Indica que vai rodar no seu i3
+    
+    steps:
+      - name: Checkout do codigo
+        uses: actions/checkout@v3
+
+      - name: Deploy com Docker Compose
+        run: |
+          # O Docker Compose vai usar o .env que já está no seu servidor
+          docker-compose up -d --build
+          
+      - name: Limpeza de imagens antigas
+        run: docker image prune -f
