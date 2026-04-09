@@ -1,8 +1,6 @@
 
 
 services:
- 
-
   # Backend em Python
   api-investiga:
     build: ./backend-python
@@ -11,7 +9,7 @@ services:
     ports:
       - "4001:4000" # Mudamos para a 4000 para o Front não precisar de ajuste
     env_file: 
-      - /home/zubgorka/investiga/.env
+      - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
