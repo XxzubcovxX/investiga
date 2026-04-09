@@ -24,7 +24,8 @@ services:
     build: ./backend-python
     container_name: investiga_agente_python
     restart: always
-    env_file: .env
+    env_file: 
+      - /home/zubgorka/investiga/.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
