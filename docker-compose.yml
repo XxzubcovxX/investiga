@@ -9,7 +9,7 @@ services:
     container_name: investiga_api
     restart: always
     ports:
-      - "4000:4000" # Mudamos para a 4000 para o Front não precisar de ajuste
+      - "4001:4000" # Mudamos para a 4000 para o Front não precisar de ajuste
     env_file: 
       - /home/zubgorka/investiga/.env
     extra_hosts:
