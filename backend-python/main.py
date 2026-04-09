@@ -1,26 +1,49 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException
+from sqlalchemy import create_engine, text
 import os
+from dotenv import load_dotenv
 
-app = FastAPI()
+load_dotenv()
 
-# Libera o React para falar com a API
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+app = FastAPI(
+    title="Investiga Políticos API",
+    description="Interface de Engenharia de Dados para triagem investigativa",
+    version="0.1.0"
 )
 
-@app.get("/")
-def read_root():
-    return {"status": "Engenharia de Dados Ativa", "engine": "Python 3.10"}
+# --- CONFIGURAÇÃO DO BANCO ---
+DB_USER = os.getenv("DB_USER", "investiga_user")
+DB_PASS = os.getenv("DB_PASS")
+DB_HOST = "host.docker.internal" 
+DB_NAME = "investiga_db"
 
-@app.get("/investigar/{cpf}")
-async def investigar_politico(cpf: str):
-    # Aqui vai entrar a lógica das 79 fontes + Gemini
-    return {"buscando": cpf, "msg": "Em breve aqui o grafo de conexões"}
+# String de conexão para o MySQL
+DATABASE_URL = f"mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=4000)
+@app.get("/", tags=["Health"])
+def status():
+    return {"status": "online", "message": "Zerver FastAPI está vivo!"}
+
+@app.get("/test-db", tags=["Infraestrutura"])
+def test_db_connection():
+    """
+    Tenta realizar uma consulta simples no MySQL Bare Metal
+    para validar a conectividade Docker -> Host.
+    """
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as connection:
+            # Executa um comando simples de versão do MySQL
+            result = connection.execute(text("SELECT VERSION()"))
+            version = result.fetchone()[0]
+            return {
+                "conexao": "sucesso",
+                "mysql_version": version,
+                "database": DB_NAME,
+                "host": DB_HOST
+            }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Falha na conexão com o banco: {str(e)}"
+        )
