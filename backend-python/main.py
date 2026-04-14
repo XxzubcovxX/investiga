@@ -7,95 +7,84 @@ import requests
 import json
 from dotenv import load_dotenv
 
-# Carrega as variáveis do seu arquivo .env no Zerver
 load_dotenv()
 
-app = FastAPI(
-    title="Investiga Políticos API",
-    description="Engine de consulta e triagem de dados investigativos",
-    version="0.1.1"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- CONFIGURAÇÃO DO BANCO DE DADOS ---
-DB_USER = os.getenv("DB_USER", "investiga_user")
-DB_PASS = os.getenv("DB_PASS")
-DB_HOST = "host.docker.internal" 
-DB_NAME = "investiga_db"
-
-DATABASE_URL = f"mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+app = FastAPI(title="Investiga Políticos API")
 
 # --- CONFIGURAÇÃO DATAJUD (FONTE 42) ---
+# Certifique-se de que esta chave não tem espaços extras
 DATAJUD_API_KEY = "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
-
-@app.get("/", tags=["Health"])
-def status():
-    return {"status": "online", "message": "Zerver FastAPI operante"}
 
 @app.get("/investigar/processo/{numero_processo}", tags=["Investigação"])
 def consultar_processo_datajud(numero_processo: str):
-    # 1. Limpa o número: remove pontos, traços e espaços
+    # 1. Limpeza do número para garantir que o Elasticsearch encontre (apenas dígitos)
     numero_limpo = "".join(filter(str.isdigit, numero_processo))
     
-    url = "https://api-publica.datajud.cnj.jus.br/api_publica_tjsp/_search"
+    url = "https://cnj.jus.br"
     
-    # Importante: O cabeçalho deve ter o prefixo 'APIKey ' antes da chave
     headers = {
         "Authorization": f"APIKey {DATAJUD_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    # 2. Use 'term' para busca exata e o número sem máscara
+    # 2. Query usando 'match' para maior flexibilidade ou 'term' para exatidão
     payload = {
         "query": {
-            "term": {
+            "match": {
                 "numeroProcesso": numero_limpo
             }
         }
     }
 
+    print(f"\n--- DEBUG: Iniciando consulta para o processo: {numero_limpo} ---")
+    print(f"Payload enviado: {json.dumps(payload)}")
+
     try:
         response = requests.post(url, json=payload, headers=headers)
-        # Se a API do CNJ retornar erro (Ex: 401, 403), isso vai para o except
-        response.raise_for_status() 
         
+        # Log do status da resposta
+        print(f"Status Code da API CNJ: {response.status_code}")
+        
+        response.raise_for_status()
         dados = response.json()
-        # O DataJud retorna os resultados dentro de hits.hits
-        hits = dados.get("hits", {}).get("hits", [])
         
-        if not hits:
-            # Se cair aqui, o processo realmente não consta na base pública do TJSP/CNJ
-            raise HTTPException(status_code=404, detail=f"Processo {numero_limpo} não encontrado ou é sigiloso.")
+        # Log do JSON bruto retornado (Isso aparecerá no seu terminal/console)
+        print("JSON Bruto recebido do DataJud:")
+        print(json.dumps(dados, indent=2))
 
-        processo_info = hits[0].get("_source", {})
+        # 3. Extração correta: hits -> hits (lista)
+        lista_hits = dados.get("hits", {}).get("hits", [])
         
-        # Mapeamento dos campos conforme o retorno real da API
-        return {
+        if not lista_hits:
+            print(f"AVISO: A lista de hits veio vazia para o número {numero_limpo}")
+            raise HTTPException(status_code=404, detail=f"Processo {numero_limpo} não encontrado ou é sigiloso no TJSP.")
+
+        # O primeiro item da lista contém o '_source' com os dados
+        processo_info = lista_hits[0].get("_source", {})
+        
+        # 4. Mapeamento seguro dos campos
+        resultado = {
             "status": "sucesso",
             "dados": {
                 "numero": processo_info.get("numeroProcesso"),
-                "classe": processo_info.get("classe", {}).get("nome"),
+                "classe": processo_info.get("classe", {}).get("nome", "Não informada"),
                 "tribunal": processo_info.get("tribunal"),
                 "data_ajuizamento": processo_info.get("dataAjuizamento"),
-                "orgao_julgador": processo_info.get("orgaoJulgador", {}).get("nome"),
+                "orgao_julgador": processo_info.get("orgaoJulgador", {}).get("nome", "Não informado"),
                 "assuntos": [a.get("nome") for a in processo_info.get("assuntos", []) if a.get("nome")],
                 "ultimas_movimentacoes": processo_info.get("movimentos", [])[:5]
             }
         }
+        
+        print("Processamento concluído com sucesso.")
+        return resultado
 
     except requests.exceptions.HTTPError as e:
-        # Captura erros de autenticação ou URL errada do CNJ
-        raise HTTPException(status_code=e.response.status_code, detail=f"Erro no DataJud: {e.response.text}")
+        print(f"ERRO HTTP: {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Erro na API DataJud: {e.response.text}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+        print(f"ERRO INTERNO: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {str(e)}")
 
 # Mantendo suas rotas originais de candidatos para compatibilidade
 @app.get("/candidatos", tags=["Dados"])
