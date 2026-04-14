@@ -13,7 +13,7 @@ app = FastAPI(title="Investiga Políticos API")
 
 # --- CONFIGURAÇÃO DATAJUD (FONTE 42) ---
 # Certifique-se de que esta chave não tem espaços extras
-DATAJUD_API_KEY = "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
+DATAJUD_API_KEY = "cVp6S2o0Ym02Ym1wM21wM21wM21wM21wM21wM21wM21wM21wM21wM21w"
 
 @app.get("/investigar/processo/{numero_processo}", tags=["Investigação"])
 def consultar_processo_datajud(numero_processo: str):
