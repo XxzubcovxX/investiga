@@ -19,10 +19,6 @@ app.add_middleware(
 @app.get("/investigar/politico/{nome}", tags=["Investigação"])
 def investigar_politico(nome: str):
     try:
-        # Use o seu método de conexão atual aqui (ex: conn = sua_funcao_db())
-        conn = get_db_connection() 
-        cursor = conn.cursor()
-
         # 1. BUSCA INFORMAÇÕES GERAIS E IDS (Query Master)
         # O %s garante que a busca por nome funcione sem SQL Injection
         query_geral = """
