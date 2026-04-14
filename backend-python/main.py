@@ -46,6 +46,7 @@ def consultar_processo_datajud(numero_processo: str):
         print(f"Status Code da API CNJ: {response.status_code}")
         
         response.raise_for_status()
+        print(response.text)
         dados = response.json()
         
         # Log do JSON bruto retornado (Isso aparecerá no seu terminal/console)
