@@ -18,7 +18,7 @@ app.add_middleware(
 
 # --- CONFIGURAÇÃO DATAJUD ---
 # Chave pública padrão atualizada do CNJ
-DATAJUD_API_KEY = "cVp6S2o0Ym02Ym1wM21wM21wM21wM21wM21wM21wM21wM21wM21wM21w"
+DATAJUD_API_KEY = "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
 
 @app.get("/investigar/processo/{numero_processo}", tags=["Investigação"])
 def consultar_processo_datajud(numero_processo: str):
