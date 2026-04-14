@@ -5,3 +5,7 @@ mysql-connector-python
 google-generativeai
 python-dotenv
 requests
+jupyter
+pandas
+scikit-learn
+matplotlib
