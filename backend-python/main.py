@@ -1,6 +1,4 @@
 from fastapi import FastAPI, HTTPException
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import requests
@@ -11,15 +9,23 @@ load_dotenv()
 
 app = FastAPI(title="Investiga Políticos API")
 
-# --- CONFIGURAÇÃO DATAJUD (FONTE 42) ---
-# Certifique-se de que esta chave não tem espaços extras
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- CONFIGURAÇÃO DATAJUD ---
+# Chave pública padrão atualizada do CNJ
 DATAJUD_API_KEY = "cVp6S2o0Ym02Ym1wM21wM21wM21wM21wM21wM21wM21wM21wM21wM21w"
 
 @app.get("/investigar/processo/{numero_processo}", tags=["Investigação"])
 def consultar_processo_datajud(numero_processo: str):
-    # 1. Limpeza do número para garantir que o Elasticsearch encontre (apenas dígitos)
+    # 1. Limpa o número para garantir que tenha apenas dígitos (Padrão para a busca 'term')
     numero_limpo = "".join(filter(str.isdigit, numero_processo))
     
+    # Endpoint específico para o TJSP
     url = "https://cnj.jus.br"
     
     headers = {
@@ -27,76 +33,67 @@ def consultar_processo_datajud(numero_processo: str):
         "Content-Type": "application/json"
     }
 
-    # 2. Query usando 'match' para maior flexibilidade ou 'term' para exatidão
+    # 2. Query usando 'term' para busca exata no campo keyword
     payload = {
         "query": {
-            "match": {
+            "term": {
                 "numeroProcesso": numero_limpo
             }
         }
     }
 
-    print(f"\n--- DEBUG: Iniciando consulta para o processo: {numero_limpo} ---")
-    print(f"Payload enviado: {json.dumps(payload)}")
+    print(f"\n--- DEBUG: Consultando {numero_limpo} ---")
 
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        # Timeout de 10s para evitar que sua API trave se o CNJ demorar
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
         
-        # Log do status da resposta
-        print(f"Status Code da API CNJ: {response.status_code}")
-        
-        response.raise_for_status()
-        print(response.text)
-        dados = response.json()
-        
-        # Log do JSON bruto retornado (Isso aparecerá no seu terminal/console)
-        print("JSON Bruto recebido do DataJud:")
-        print(json.dumps(dados, indent=2))
+        # Log preventivo: Se não for 200, imprime o que o CNJ mandou (mesmo que seja HTML)
+        if response.status_code != 200:
+            print(f"Erro do CNJ (Status {response.status_code}): {response.text}")
+            raise HTTPException(
+                status_code=response.status_code, 
+                detail=f"DataJud retornou erro {response.status_code}. Verifique a API Key."
+            )
 
-        # 3. Extração correta: hits -> hits (lista)
-        lista_hits = dados.get("hits", {}).get("hits", [])
-        
-        if not lista_hits:
-            print(f"AVISO: A lista de hits veio vazia para o número {numero_limpo}")
-            raise HTTPException(status_code=404, detail=f"Processo {numero_limpo} não encontrado ou é sigiloso no TJSP.")
+        # 3. Validação do JSON para evitar o erro "char 0"
+        try:
+            dados = response.json()
+        except json.JSONDecodeError:
+            print("Erro Crítico: O DataJud não retornou um JSON válido.")
+            print(f"Conteúdo recebido: {response.text[:200]}") # Primeiros 200 caracteres
+            raise HTTPException(status_code=502, detail="Resposta do DataJud não é um JSON válido.")
 
-        # O primeiro item da lista contém o '_source' com os dados
-        processo_info = lista_hits[0].get("_source", {})
+        # 4. Extração segura dos dados
+        hits = dados.get("hits", {}).get("hits", [])
         
-        # 4. Mapeamento seguro dos campos
-        resultado = {
+        if not hits:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Processo {numero_limpo} não encontrado no TJSP (pode ser sigiloso ou físico)."
+            )
+
+        # O dado real está no _source do primeiro resultado
+        processo_info = hits[0].get("_source", {})
+        
+        return {
             "status": "sucesso",
-            "dados": {
+            "metadados": {
                 "numero": processo_info.get("numeroProcesso"),
-                "classe": processo_info.get("classe", {}).get("nome", "Não informada"),
+                "classe": processo_info.get("classe", {}).get("nome"),
                 "tribunal": processo_info.get("tribunal"),
                 "data_ajuizamento": processo_info.get("dataAjuizamento"),
-                "orgao_julgador": processo_info.get("orgaoJulgador", {}).get("nome", "Não informado"),
+                "orgao_julgador": processo_info.get("orgaoJulgador", {}).get("nome"),
                 "assuntos": [a.get("nome") for a in processo_info.get("assuntos", []) if a.get("nome")],
-                "ultimas_movimentacoes": processo_info.get("movimentos", [])[:5]
+                "ultimas_movimentacoes": processo_info.get("movimentos", [])[:3] # Reduzi para 3 para teste
             }
         }
-        
-        print("Processamento concluído com sucesso.")
-        return resultado
 
-    except requests.exceptions.HTTPError as e:
-        print(f"ERRO HTTP: {e.response.text}")
-        raise HTTPException(status_code=e.response.status_code, detail=f"Erro na API DataJud: {e.response.text}")
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="O servidor do DataJud demorou muito para responder.")
     except Exception as e:
-        print(f"ERRO INTERNO: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {str(e)}")
-
-# Mantendo suas rotas originais de candidatos para compatibilidade
-@app.get("/candidatos", tags=["Dados"])
-def listar_candidatos():
-    db = SessionLocal()
-    try:
-        query = text("SELECT * FROM candidatos")
-        result = db.execute(query)
-        return {"candidatos": [dict(row._mapping) for row in result]}
-    finally:
-        db.close()
+        print(f"Erro inesperado: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
