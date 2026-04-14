@@ -42,41 +42,42 @@ def status():
 
 @app.get("/investigar/processo/{numero_processo}", tags=["Investigação"])
 def consultar_processo_datajud(numero_processo: str):
-    """
-    Consulta metadados de um processo específico pelo seu número (Padrão CNJ).
-    Baseado na documentação oficial do DataJud.
-    """
-    # Para o teste em SP, usamos o índice do TJSP
+    # 1. Limpa o número: remove pontos, traços e espaços
+    numero_limpo = "".join(filter(str.isdigit, numero_processo))
+    
     url = "https://api-publica.datajud.cnj.jus.br/api_publica_tjsp/_search"
     
+    # Importante: O cabeçalho deve ter o prefixo 'APIKey ' antes da chave
     headers = {
         "Authorization": f"APIKey {DATAJUD_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    # Estrutura do payload exatamente como na documentação enviada
+    # 2. Use 'term' para busca exata e o número sem máscara
     payload = {
         "query": {
-            "match": {
-                "numeroProcesso": numero_processo
+            "term": {
+                "numeroProcesso": numero_limpo
             }
         }
     }
 
     try:
-        # Enviando como JSON para seguir o padrão da documentação
         response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
+        # Se a API do CNJ retornar erro (Ex: 401, 403), isso vai para o except
+        response.raise_for_status() 
         
         dados = response.json()
+        # O DataJud retorna os resultados dentro de hits.hits
         hits = dados.get("hits", {}).get("hits", [])
         
         if not hits:
-            raise HTTPException(status_code=404, detail="Processo não encontrado no tribunal especificado.")
+            # Se cair aqui, o processo realmente não consta na base pública do TJSP/CNJ
+            raise HTTPException(status_code=404, detail=f"Processo {numero_limpo} não encontrado ou é sigiloso.")
 
-        # Extraindo o _source do primeiro hit encontrado (ID único)
         processo_info = hits[0].get("_source", {})
         
+        # Mapeamento dos campos conforme o retorno real da API
         return {
             "status": "sucesso",
             "dados": {
@@ -85,13 +86,14 @@ def consultar_processo_datajud(numero_processo: str):
                 "tribunal": processo_info.get("tribunal"),
                 "data_ajuizamento": processo_info.get("dataAjuizamento"),
                 "orgao_julgador": processo_info.get("orgaoJulgador", {}).get("nome"),
-                "assuntos": [a.get("nome") for a in processo_info.get("assuntos", [])],
-                "ultimas_movimentacoes": processo_info.get("movimentos", [])[:5] # Retorna as 5 últimas
+                "assuntos": [a.get("nome") for a in processo_info.get("assuntos", []) if a.get("nome")],
+                "ultimas_movimentacoes": processo_info.get("movimentos", [])[:5]
             }
         }
 
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Erro na comunicação com o DataJud: {str(e)}")
+    except requests.exceptions.HTTPError as e:
+        # Captura erros de autenticação ou URL errada do CNJ
+        raise HTTPException(status_code=e.response.status_code, detail=f"Erro no DataJud: {e.response.text}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
