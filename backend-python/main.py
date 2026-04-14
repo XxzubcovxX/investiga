@@ -38,7 +38,7 @@ def investigar_politico(nome: str):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # 1. BUSCA INFORMAÇÕES GERAIS, BENS E GASTOS TOTAIS
+        # 1. BUSCA UMA LISTA DE CANDIDATOS (Aumentamos o limite e tiramos o fetchone)
         query_geral = """
         SELECT 
             c.SQ_CANDIDATO,
@@ -60,63 +60,70 @@ def investigar_politico(nome: str):
             SELECT DISTINCT SQ_CANDIDATO, SQ_PRESTADOR_CONTAS FROM receitas_candidatos_2022
         ) r ON c.SQ_CANDIDATO = r.SQ_CANDIDATO
         WHERE c.NM_CANDIDATO LIKE %s
-        LIMIT 1;
+        LIMIT 10;
         """
         cursor.execute(query_geral, (f"%{nome}%",))
-        geral = cursor.fetchone()
+        candidatos_encontrados = cursor.fetchall() # Agora pegamos TODOS (fetch ALL)
 
-        if not geral:
-            raise HTTPException(status_code=404, detail="Candidato não encontrado no banco de 2022.")
+        if not candidatos_encontrados:
+            raise HTTPException(status_code=404, detail="Nenhum candidato encontrado.")
 
-        sq_cand = geral['SQ_CANDIDATO']
-        sq_prestador = geral['SQ_PRESTADOR_CONTAS']
+        # 2. MONTAR O RESULTADO FINAL
+        lista_final = []
 
-        # 2. TOP 5 DOADORES (Receitas)
-        query_doadores = """
-        SELECT NM_DOADOR, SUM(CAST(REPLACE(VR_RECEITA, ',', '.') AS DECIMAL(15,2))) as Total_Doado
-        FROM receitas_candidatos_2022
-        WHERE SQ_CANDIDATO = %s
-        GROUP BY NM_DOADOR ORDER BY Total_Doado DESC LIMIT 5;
-        """
-        cursor.execute(query_doadores, (sq_cand,))
-        top_doadores = cursor.fetchall()
+        for cand in candidatos_encontrados:
+            sq_cand = cand['SQ_CANDIDATO']
+            sq_prestador = cand['SQ_PRESTADOR_CONTAS']
 
-        # 3. TOP 5 DESPESAS (Gasto Frequente)
-        query_despesas = """
-        SELECT DS_DESPESA, COUNT(*) as Quantidade_Vezes
-        FROM despesas_pagas_2022
-        WHERE SQ_PRESTADOR_CONTAS = %s
-        GROUP BY DS_DESPESA ORDER BY Quantidade_Vezes DESC LIMIT 5;
-        """
-        cursor.execute(query_despesas, (sq_prestador,))
-        top_despesas = cursor.fetchall()
+            # TOP 5 DOADORES para ESTE candidato específico
+            cursor.execute("""
+                SELECT NM_DOADOR, SUM(CAST(REPLACE(VR_RECEITA, ',', '.') AS DECIMAL(15,2))) as Total_Doado
+                FROM receitas_candidatos_2022
+                WHERE SQ_CANDIDATO = %s
+                GROUP BY NM_DOADOR ORDER BY Total_Doado DESC LIMIT 5;
+            """, (sq_cand,))
+            top_doadores = cursor.fetchall()
+
+            # TOP 5 DESPESAS para ESTE candidato específico
+            cursor.execute("""
+                SELECT DS_DESPESA, COUNT(*) as Quantidade_Vezes
+                FROM despesas_pagas_2022
+                WHERE SQ_PRESTADOR_CONTAS = %s
+                GROUP BY DS_DESPESA ORDER BY Quantidade_Vezes DESC LIMIT 5;
+            """, (sq_prestador,))
+            top_despesas = cursor.fetchall()
+
+            # Monta o objeto de cada candidato
+            item = {
+                "perfil": {
+                    "nome": cand['Nome'],
+                    "cpf": cand['CPF'],
+                    "partido": cand['Partido'],
+                    "cargo": cand['Cargo'],
+                    "situacao": cand['Situacao'],
+                    "estado": cand['Estado'],
+                    "sq_candidato": cand['SQ_CANDIDATO']
+                },
+                "financeiro": {
+                    "patrimonio_declarado": float(cand['Valor_Total_Bens'] or 0),
+                    "total_gasto_campanha": float(cand['Gasto_Total'] or 0),
+                    "investimento_proprio_originario": float(cand['Total_Doador_Originario'] or 0)
+                },
+                "top_5_doadores": top_doadores,
+                "top_5_gastos": top_despesas
+            }
+            lista_final.append(item)
 
         return {
             "status": "sucesso",
-            "perfil": {
-                "nome": geral['Nome'],
-                "cpf": geral['CPF'],
-                "partido": geral['Partido'],
-                "cargo": geral['Cargo'],
-                "situacao": geral['Situacao'],
-                "estado": geral['Estado'],
-                "sq_candidato": geral['SQ_CANDIDATO']
-            },
-            "financeiro": {
-                "patrimonio_declarado": float(geral['Valor_Total_Bens'] or 0),
-                "total_gasto_campanha": float(geral['Gasto_Total'] or 0),
-                "investimento_proprio_originario": float(geral['Total_Doador_Originario'] or 0)
-            },
-            "top_5_doadores": top_doadores,
-            "top_5_gastos": top_despesas
+            "total_encontrado": len(lista_final),
+            "resultados": lista_final
         }
 
     except Exception as e:
-        print(f"ERRO NO BANCO: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {str(e)}")
-    
+        print(f"ERRO: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Garante que as conexões fecham sempre, evitando o erro de "not defined"
         if cursor: cursor.close()
         if conn: conn.close()
 
