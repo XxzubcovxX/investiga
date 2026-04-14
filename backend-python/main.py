@@ -3,24 +3,42 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import requests
 import json
+import pymysql
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = FastAPI(title="Investiga Políticos API")
 
+# Configuração de CORS para o seu Front em React
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# --- ENDPOINT INVESTIGAÇÃO POLÍTICO ---
+
+# --- FUNÇÃO DE CONEXÃO COM O BANCO ---
+def get_db_connection():
+    # Ele vai puxar automaticamente as variáveis do seu Docker Compose / .env
+    return pymysql.connect(
+        host=os.getenv("DB_HOST", "host.docker.internal"),
+        user=os.getenv("DB_USER", "root"),
+        password=os.getenv("DB_PASS", ""),
+        database=os.getenv("DB_NAME", "investiga_db"),
+        cursorclass=pymysql.cursors.DictCursor
+    )
+
+# --- ENDPOINT INVESTIGAÇÃO POLÍTICO (O NOVO) ---
 @app.get("/investigar/politico/{nome}", tags=["Investigação"])
 def investigar_politico(nome: str):
+    conn = None
+    cursor = None
     try:
-        # 1. BUSCA INFORMAÇÕES GERAIS E IDS (Query Master)
-        # O %s garante que a busca por nome funcione sem SQL Injection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 1. BUSCA INFORMAÇÕES GERAIS, BENS E GASTOS TOTAIS
         query_geral = """
         SELECT 
             c.SQ_CANDIDATO,
@@ -48,8 +66,7 @@ def investigar_politico(nome: str):
         geral = cursor.fetchone()
 
         if not geral:
-            conn.close()
-            raise HTTPException(status_code=404, detail="Candidato não encontrado.")
+            raise HTTPException(status_code=404, detail="Candidato não encontrado no banco de 2022.")
 
         sq_cand = geral['SQ_CANDIDATO']
         sq_prestador = geral['SQ_PRESTADOR_CONTAS']
@@ -74,9 +91,6 @@ def investigar_politico(nome: str):
         cursor.execute(query_despesas, (sq_prestador,))
         top_despesas = cursor.fetchall()
 
-        conn.close()
-
-        # Retorno Limpo para o seu Front-end
         return {
             "status": "sucesso",
             "perfil": {
@@ -86,7 +100,7 @@ def investigar_politico(nome: str):
                 "cargo": geral['Cargo'],
                 "situacao": geral['Situacao'],
                 "estado": geral['Estado'],
-                "sq_candidato": geral['SQ_CANDIDATO'] # Importante para o link da foto no front
+                "sq_candidato": geral['SQ_CANDIDATO']
             },
             "financeiro": {
                 "patrimonio_declarado": float(geral['Valor_Total_Bens'] or 0),
@@ -98,67 +112,40 @@ def investigar_politico(nome: str):
         }
 
     except Exception as e:
-        if 'conn' in locals(): conn.close()
+        print(f"ERRO NO BANCO: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {str(e)}")
+    
+    finally:
+        # Garante que as conexões fecham sempre, evitando o erro de "not defined"
+        if cursor: cursor.close()
+        if conn: conn.close()
 
-# --- CONFIGURAÇÃO DATAJUD ---
-# Chave pública padrão atualizada do CNJ
+# --- CONFIGURAÇÃO DATAJUD (MANTIDO) ---
 DATAJUD_API_KEY = "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw=="
 
 @app.get("/investigar/processo/{numero_processo}", tags=["Investigação"])
 def consultar_processo_datajud(numero_processo: str):
-    # 1. Limpa o número para garantir que tenha apenas dígitos (Padrão para a busca 'term')
     numero_limpo = "".join(filter(str.isdigit, numero_processo))
-    
-    # Endpoint específico para o TJSP
-    url = "https://cnj.jus.br"
+    url = "https://api-publica.datajud.cnj.jus.br/api_publica_tjsp/_search" # Exemplo TJSP
     
     headers = {
         "Authorization": f"APIKey {DATAJUD_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    # 2. Query usando 'term' para busca exata no campo keyword
-    payload = {
-        "query": {
-            "term": {
-                "numeroProcesso": numero_limpo
-            }
-        }
-    }
-
-    print(f"\n--- DEBUG: Consultando {numero_limpo} ---")
+    payload = {"query": {"term": {"numeroProcesso": numero_limpo}}}
 
     try:
-        # Timeout de 10s para evitar que sua API trave se o CNJ demorar
         response = requests.post(url, json=payload, headers=headers, timeout=10)
-        
-        # Log preventivo: Se não for 200, imprime o que o CNJ mandou (mesmo que seja HTML)
         if response.status_code != 200:
-            print(f"Erro do CNJ (Status {response.status_code}): {response.text}")
-            raise HTTPException(
-                status_code=response.status_code, 
-                detail=f"DataJud retornou erro {response.status_code}. Verifique a API Key."
-            )
+            raise HTTPException(status_code=response.status_code, detail="Erro no DataJud")
 
-        # 3. Validação do JSON para evitar o erro "char 0"
-        try:
-            dados = response.json()
-        except json.JSONDecodeError:
-            print("Erro Crítico: O DataJud não retornou um JSON válido.")
-            print(f"Conteúdo recebido: {response.text[:200]}") # Primeiros 200 caracteres
-            raise HTTPException(status_code=502, detail="Resposta do DataJud não é um JSON válido.")
-
-        # 4. Extração segura dos dados
+        dados = response.json()
         hits = dados.get("hits", {}).get("hits", [])
         
         if not hits:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Processo {numero_limpo} não encontrado no TJSP (pode ser sigiloso ou físico)."
-            )
+            raise HTTPException(status_code=404, detail="Processo não encontrado.")
 
-        # O dado real está no _source do primeiro resultado
         processo_info = hits[0].get("_source", {})
         
         return {
@@ -167,18 +154,12 @@ def consultar_processo_datajud(numero_processo: str):
                 "numero": processo_info.get("numeroProcesso"),
                 "classe": processo_info.get("classe", {}).get("nome"),
                 "tribunal": processo_info.get("tribunal"),
-                "data_ajuizamento": processo_info.get("dataAjuizamento"),
-                "orgao_julgador": processo_info.get("orgaoJulgador", {}).get("nome"),
-                "assuntos": [a.get("nome") for a in processo_info.get("assuntos", []) if a.get("nome")],
-                "ultimas_movimentacoes": processo_info.get("movimentos", [])[:3] # Reduzi para 3 para teste
+                "assuntos": [a.get("nome") for a in processo_info.get("assuntos", [])],
+                "ultimas_movimentacoes": processo_info.get("movimentos", [])[:3]
             }
         }
-
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="O servidor do DataJud demorou muito para responder.")
     except Exception as e:
-        print(f"Erro inesperado: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
